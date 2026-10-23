@@ -328,5 +328,9 @@ Open points to check during the step:
   6. A message from a JID that isn't allowlisted is ignored.
   7. Repeat 2–3 with `docker compose up` instead of `uv run`; check that files Claude edits in `/workspace` are owned by the host user.
 
+**Notes (partial, 2026-10-23):**
+- Done here: `uv run pytest` → 200 passed. `uv run claude-xmpp --help` prints the CLI help.
+- Blocked on this dev box: no Docker/Podman, no sudo, no XMPP server or account, no `config.toml`/`.env`. The Step 9 Docker checks and the end-to-end checks 1–7 still need to be run by hand on a machine that has them.
+
 ## Out of scope
 Multiple rooms or sessions, file uploads (XEP-0363), 1:1 chat control, message corrections.
