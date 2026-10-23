@@ -150,7 +150,7 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
 - Tests: `tests/test_session.py` (19 tests) uses a fake client: turns, queueing, interrupt, cost across `/clear`, restart/resume, reconnect after CLI exit, permission y/n/a, questions, plan approve/feedback, timeout. 151 tests pass.
 - A live run with the bundled CLI answered a prompt (`pong`, `✓ done · 1 turn · $0.16 · 4.9s`).
 
-## Step 6 — Harness commands (`commands.py`)
+## Step 6 — Harness commands (`commands.py`) ✅ done
 - Dispatch only for messages starting with `/`. Unknown commands go to Claude as-is (SDK commands like `/clear`, `/compact`, skills).
 - Commands:
   - `/help`
@@ -165,6 +165,21 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
 - Routing order for each inbound message: approval reply → harness command → `session.submit`.
 
 **Done when:** `tests/test_commands.py` passes, using a fake session that records calls.
+
+**Notes (done):**
+- API: `Router(session, config, registry=None)` (the registry defaults to `session.registry`); `await router.handle(text)` does the full routing; `await router.dispatch(text) -> bool` runs only a harness command. `COMMANDS` maps name → `Command(name, usage, help, handler)`. Replies go through `session.say()`, so the router has no XMPP dependency. The bot (Step 7) just calls `router.handle()` for each allowed message.
+- Registry outcomes with a `message` are posted. A successful reply posts nothing, because Claude's next output shows it.
+- Command names are case-insensitive. `/` alone and paths like `/etc/hosts?` go to Claude. A handler that raises posts `⚠️ /<cmd> failed: …`.
+- Behaviour details:
+  - `/plan` (or `/plan on`) and `/plan off`, which goes back to `session.mode_before_plan`. Both say so when there's nothing to change.
+  - `/mode` without an argument shows the current mode and the valid list. Mode names are matched case-insensitively (`acceptedits` → `acceptEdits`).
+  - `/model` without an argument shows the model. `/model default` passes `None` to `set_model`.
+  - `/resume` without an ID shows usage and the current session ID.
+  - `/stop` says "nothing to stop" when `interrupt()` returns False.
+  - `/status`: state (idle / working / not connected), queued and open-prompt counts, session ID, model, mode, cost this session and in total.
+  - `/commands` lists harness commands and Claude's `slash_commands`, leaving out names the harness shadows (e.g. Claude's `/model`).
+  - `/help` also includes the approval reply syntax.
+- 172 tests pass (21 new).
 
 ## Step 7 — XMPP bot (`bot.py`)
 - `ClientXMPP` with xep_0030, xep_0045, xep_0199 (keepalive), xep_0085 (chat states).
