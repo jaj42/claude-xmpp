@@ -68,7 +68,7 @@ tests/  test_config.py test_approvals.py test_render.py test_commands.py test_ga
 - `pyproject.toml` now sets `testpaths = ["tests"]` (pytest was collecting the `slixmpp/` checkout) and `asyncio_mode = "auto"`.
 - 25 tests pass.
 
-## Step 3 — Approvals registry (`approvals.py`) — pure logic
+## Step 3 — Approvals registry (`approvals.py`) — pure logic ✅ done
 - IDs: 5 letters from `a-km-z`, unique among open items.
 - `Pending(kind: permission|question|plan, future, payload)`, with `open() / resolve() / cancel_all(reason)`.
 - Reply parser `^(y|yes|n|no|a|always)(?:\s+([a-km-z]{5}))?(?:\s+(.*))?$` (case-insensitive):
@@ -77,6 +77,18 @@ tests/  test_config.py test_approvals.py test_render.py test_commands.py test_ga
 - Question answers: `<id> 1,3`, numbers, or free text (when exactly one question is open). Multi-question prompts are answered one line per question. Numbers map to option labels; anything else is used as free text.
 
 **Done when:** `tests/test_approvals.py` passes.
+
+**Notes (done):**
+- API: `Registry.open(kind, payload) -> Pending` (needs a running loop), `resolve(id, value)`, `discard(id)` (for timeouts), `cancel_all(reason) -> int`, `get`, `items(*kinds)`, `len()`. `handle(text) -> Outcome | None`: None means "not a reply, route it onwards"; an `Outcome` with `resolved=None` carries a `message` to post back (ambiguous, bad number, wrong kind).
+- Future results: permission/plan → `Reply(decision: "yes"|"no"|"always", id, text)`; question → `dict[question text, answer]` (the SDK `answers` shape; multi-select labels joined with `", "`); `cancel_all` → `Cancelled(reason)` instead of cancelling the future, so `_can_use_tool` gets a plain value.
+- Deviations / extra rules:
+  - "Exactly one open" is counted per kind: `y/n/a` look only at permission and plan items, answers only at questions. So with one permission and one question open, `y` answers the permission and `2` answers the question.
+  - Five letters after `n` that aren't an open ID are part of the reason (`n words here`), with the original case kept.
+  - Messages starting with `/` are never treated as replies, so `/stop` still works while a question is open. Any other text is an answer when exactly one question is open.
+  - `a` on a plan is refused with a hint; `y <question-id>` and `<permission-id> 1` get an error message.
+  - A single question accepts multi-line free text (lines joined with spaces). Out-of-range numbers or several numbers on a single-select question are errors, and the item stays open.
+- Pure helpers `parse_reply`, `parse_answer`, `parse_answers` are public for the renderer and tests.
+- 83 tests pass (58 new).
 
 ## Step 4 — Rendering (`render.py`) — pure logic
 - TextBlock → text.
