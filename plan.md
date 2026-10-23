@@ -20,6 +20,7 @@ Slash commands:
 Final layout (`/workspace/claude_xmpp_agent/`):
 ```
 pyproject.toml  config.example.toml  README.md  plan.md
+Dockerfile  .dockerignore  compose.yaml
 src/claude_xmpp_agent/  __main__.py config.py bot.py session.py approvals.py commands.py render.py
 tests/  test_config.py test_approvals.py test_render.py test_session.py test_commands.py test_gating.py
 ```
@@ -233,7 +234,69 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
 - Smoke test: with a real config and no XMPP server, the bot started the Claude CLI, tried to connect, and exited 0 on SIGTERM.
 - 198 tests pass (8 new in `tests/test_main.py`). The final layout gains `tests/test_main.py`.
 
-## Step 9 — Verification
+## Step 9 — Docker deployment (`Dockerfile`, `.dockerignore`, `compose.yaml`)
+Base: Astral's uv images on Debian trixie-slim. Alpine was considered and dropped: `claude-agent-sdk` has no musllinux wheel, so on Alpine the bundled Claude CLI can't be used and Claude Code would need a separate musl install with extra workarounds. On glibc everything comes from `uv.lock`.
+
+Constraints found while planning:
+- `claude-agent-sdk` ships `manylinux_2_17` wheels for x86_64 and aarch64 that bundle the Claude CLI (`_bundled/claude`). The SDK uses it before looking on `PATH`, so the image needs no separate Claude Code install, and the CLI version is pinned by the SDK version in `uv.lock`. Updating Claude Code = bumping the SDK and rebuilding.
+- `slixmpp` has manylinux wheels for both architectures, so no compiler is needed.
+- Claude Code refuses `bypassPermissions` as root, and running tools as root is a bad idea anyway → run as a non-root user.
+
+Dockerfile (multi-stage):
+- **Builder:** `ghcr.io/astral-sh/uv:0.13.5-python3.13-trixie-slim` (pin the tag; matches `.python-version` 3.13 and `uv_build<0.14`).
+  - `ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_DEV=1 UV_PYTHON_DOWNLOADS=0` (use the image's Python so the venv works in the runtime stage).
+  - Layer 1: `uv sync --locked --no-install-project --no-editable` with cache mount `/root/.cache/uv` and bind mounts of `uv.lock` and `pyproject.toml`.
+  - Layer 2: `COPY` the project, then `uv sync --locked --no-editable`.
+- **Runtime:** `python:3.13-slim-trixie` (the base the uv image is built on, so the venv's `/usr/local/bin/python3` link still resolves). uv isn't needed at runtime.
+  - `apt-get install --no-install-recommends git ca-certificates`, then remove `/var/lib/apt/lists/*`. bash is already in the base image; ripgrep is built into the CLI.
+  - Non-root user `agent` (uid 1000), `HOME=/home/agent`.
+  - `COPY --from=builder /app/.venv /app/.venv` (no source code).
+  - `ENV PATH=/app/.venv/bin:$PATH DISABLE_AUTOUPDATER=1` (updates come from rebuilding the image).
+  - `USER agent`, `WORKDIR /workspace`, `ENTRYPOINT ["claude-xmpp"]`, `CMD ["--config", "/config/config.toml"]`. Exec form, so SIGTERM reaches the Step 8 handler.
+
+Runtime contract (document in README):
+- `/config/config.toml`: mounted read-only. Set `claude.cwd = "/workspace"` (absolute, because relative paths resolve against the config file's directory).
+- `/workspace`: bind mount of the project Claude works on.
+- `/home/agent/.claude`: named volume. Keeps sessions (for `/resume`), settings and login across restarts.
+- Secrets as env vars, never baked into the image: `XMPP_PASSWORD`, and `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (see auth note below).
+- File ownership: the container runs as uid 1000. Document `--user` / matching host uid for the workspace mount.
+
+Auth note for the README (from code.claude.com legal-and-compliance and Agent SDK overview, checked 2026-10-23):
+- Anthropic asks developers of Agent SDK products to use API keys, and forbids routing requests through Free/Pro/Max credentials on behalf of other users.
+- Pro/Max limits "assume ordinary, individual usage of Claude Code and the Agent SDK", so a subscriber running this bot for themselves with their own token (`claude setup-token`) fits that wording.
+- If other people are on the allowlist, use an API key: their prompts would otherwise run on the owner's subscription.
+
+Authentication section for the README (replaces the one-line prerequisite at `README.md:10`; covers both `uv run` and Docker; source: code.claude.com/docs/en/authentication):
+- **Getting the OAuth token** (Pro, Max, Team or Enterprise plan):
+  - Run `claude setup-token` on any machine with a browser. It opens the usual claude.ai sign-in, then prints the token. It doesn't save it anywhere, so copy it right away.
+  - No Claude Code on the host? Use the CLI bundled in the image: `docker run --rm -it --entrypoint /app/.venv/lib/python3.13/site-packages/claude_agent_sdk/_bundled/claude claude-xmpp setup-token`. The browser can't reach the container's callback, so paste the code the browser shows back into the terminal.
+  - The token lasts **one year**. Note the renewal date; when it expires, every turn fails with an auth error until a new token is set.
+  - It can only make model requests: claude.ai connectors and Remote Control don't work with it. Locally configured MCP servers do.
+- **Giving it to the bot:** set `CLAUDE_CODE_OAUTH_TOKEN`. The bot doesn't read it; the SDK passes the environment to the Claude CLI.
+  - `uv run`: `export CLAUDE_CODE_OAUTH_TOKEN=…` before starting, or put it in the service's environment (e.g. a systemd `EnvironmentFile=` with mode 0600).
+  - Docker: a line in `.env` (`CLAUDE_CODE_OAUTH_TOKEN=…`), loaded by `env_file:` in `compose.yaml`; `.env` is git-ignored and docker-ignored. `docker run --env-file .env` without compose.
+  - Never put it in `config.toml` or the image.
+- **Alternatives:** `ANTHROPIC_API_KEY` (from platform.claude.com, billed per token), or for `uv run` only, an existing `claude` login on the host (`~/.claude/.credentials.json`). In Docker, a login stored in the `/home/agent/.claude` volume also works but the token is simpler.
+- **Precedence pitfall:** `ANTHROPIC_API_KEY` wins over `CLAUDE_CODE_OAUTH_TOKEN`. If both are set, usage is billed to the API key. Set only one.
+- **Checking which one is used:** the result line shows a `$` cost either way (only an estimate on a subscription), so it can't tell you. The SDK's init data has an `apiKeySource` field (`claude_agent_sdk/types.py`): log it at startup and add an `auth` line to `/status`.
+
+`.dockerignore`: `.venv`, `.git`, `slixmpp/`, `.pytest_cache`, `__pycache__`, `config.toml`, `.env`, `tests/`, `*.md` except `README.md` (the build backend reads it).
+
+`compose.yaml`: one service with `build: .`, `init: true` (reaps the CLI's child processes, since Python is PID 1), `restart: unless-stopped`, `env_file: .env`, the three mounts above. Add `.env` to `.gitignore`.
+
+Open points to check during the step:
+- The bundled CLI is executable by the non-root user after `COPY --from=builder`.
+- Note the image size in the step notes.
+
+**Done when:**
+- `docker build -t claude-xmpp .` succeeds (on a machine with Docker; this dev box has neither Docker nor Podman).
+- `docker run --rm claude-xmpp --help` prints the CLI help.
+- `docker run --rm --entrypoint id claude-xmpp` shows uid 1000, and `docker run --rm --entrypoint sh claude-xmpp -c '/app/.venv/lib/python3.13/site-packages/claude_agent_sdk/_bundled/claude --version'` works.
+- With a real config and auth: the container starts the Claude CLI and connects; `docker stop` exits it cleanly (exit 0, as in the Step 8 smoke test).
+- README has a Docker section (build, `.env`, mounts, compose) and the Authentication section above.
+- `/status` shows the auth source; with only `CLAUDE_CODE_OAUTH_TOKEN` set it doesn't report an API key.
+
+## Step 10 — Verification
 - `uv run pytest`: all green.
 - End-to-end (manual, needs an XMPP account, a room and Claude auth):
   1. `uv run claude-xmpp --config config.toml`
@@ -242,6 +305,7 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
   4. `/plan`, then a task → plan → `n <id> add tests` → revised plan → `y`.
   5. `/stop` mid-task; `/clear`; `/status`; `/model sonnet`.
   6. A message from a JID that isn't allowlisted is ignored.
+  7. Repeat 2–3 with `docker compose up` instead of `uv run`; check that files Claude edits in `/workspace` are owned by the host user.
 
 ## Out of scope
 Multiple rooms or sessions, file uploads (XEP-0363), 1:1 chat control, message corrections.
