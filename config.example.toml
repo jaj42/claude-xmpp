@@ -13,6 +13,7 @@ allowed_jids = ["alice@example.org"]
 
 [claude]
 cwd = "."                       # relative paths are resolved against this file's directory
+                                # in Docker: cwd = "/workspace"
 # model = "claude-sonnet-5-5"
 permission_mode = "default"     # default | acceptEdits | plan | dontAsk | auto | bypassPermissions
 allowed_tools = []              # tools that never need approval, e.g. ["Read", "Grep", "Glob"]

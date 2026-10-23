@@ -6,8 +6,8 @@ Built on the [Claude Agent SDK](https://pypi.org/project/claude-agent-sdk/) and 
 
 ## Prerequisites
 
-- **Python 3.11+** and [uv](https://docs.astral.sh/uv/).
-- **Claude authentication** on the machine that runs the bot. The SDK ships its own Claude Code CLI and uses the same login as `claude` (run `claude` once and log in), or `ANTHROPIC_API_KEY`.
+- **Python 3.11+** and [uv](https://docs.astral.sh/uv/), or Docker (see [Docker](#docker)).
+- **Claude authentication**: an OAuth token from a Claude subscription or an API key. See [Authentication](#authentication).
 - **A bot account** on an XMPP server, e.g. `claude-bot@example.org`.
 - **A non-anonymous room.** The bot checks each sender's *real* JID against an allowlist, so it must be able to see real JIDs. Configure the room as:
   - non-anonymous ("who can see real JIDs: everyone", or at least moderators, with the bot as moderator)
@@ -15,6 +15,44 @@ Built on the [Claude Agent SDK](https://pypi.org/project/claude-agent-sdk/) and 
   - not publicly listed (recommended)
 
   If the bot can't see real JIDs it posts a warning and ignores everyone.
+
+## Authentication
+
+The SDK ships its own Claude Code CLI, and the bot runs it with the bot's environment. Give it **one** of these:
+
+- **`CLAUDE_CODE_OAUTH_TOKEN`** (Pro, Max, Team or Enterprise plan). Recommended when you run the bot for yourself.
+- **`ANTHROPIC_API_KEY`** from [platform.claude.com](https://platform.claude.com), billed per token. Use this if anyone else is on the allowlist (see below).
+- For `uv run` only: an existing `claude` login on the host (`~/.claude/.credentials.json`).
+
+### Getting the OAuth token
+
+1. Run `claude setup-token` on any machine with a browser. It opens the usual claude.ai sign-in and then prints the token. It doesn't save it anywhere, so copy it right away.
+
+   No Claude Code on the host? Use the CLI bundled in the Docker image (build it first, see [Docker](#docker)):
+
+   ```sh
+   docker run --rm -it --entrypoint /app/.venv/lib/python3.13/site-packages/claude_agent_sdk/_bundled/claude claude-xmpp setup-token
+   ```
+
+   The browser can't reach the container's callback, so paste the code the browser shows back into the terminal.
+2. The token lasts **one year**. Note the renewal date: once it expires, every turn fails with an auth error until you set a new one.
+3. It can only make model requests. claude.ai connectors and Remote Control don't work with it; MCP servers configured locally do.
+
+### Giving it to the bot
+
+Set `CLAUDE_CODE_OAUTH_TOKEN` in the bot's environment. The bot doesn't read it itself; the CLI does.
+
+- `uv run`: `export CLAUDE_CODE_OAUTH_TOKEN=…` before starting, or put it in the service's environment (e.g. a systemd `EnvironmentFile=` with mode `0600`).
+- Docker: a line `CLAUDE_CODE_OAUTH_TOKEN=…` in `.env`, which `compose.yaml` loads. Without compose: `docker run --env-file .env …`. `.env` is ignored by git and by the Docker build.
+- Never put it in `config.toml` or in the image.
+
+**Set only one credential.** `ANTHROPIC_API_KEY` wins over `CLAUDE_CODE_OAUTH_TOKEN`: if both are set, usage is billed to the API key.
+
+**Checking which one is used:** the `✓ done` line shows a `$` cost either way (only an estimate on a subscription), so it can't tell you. `/status` has an `auth:` line instead, and the bot logs it: `API key (ANTHROPIC_API_KEY)` for a key, `subscription (Claude Max)` for a token or login. It's confirmed by the first turn; before that `/status` shows the account's plan.
+
+### Subscription or API key?
+
+Anthropic asks developers of products built on the Agent SDK to use API keys, and doesn't allow Free/Pro/Max credentials to serve other users. Pro/Max limits "assume ordinary, individual usage of Claude Code and the Agent SDK", so running this bot for yourself with your own token fits. If other people are on the allowlist, use an API key: their prompts would otherwise run on your subscription.
 
 ## Setup
 
@@ -58,6 +96,54 @@ Exit codes: `0` normal shutdown, `1` fatal error (Claude failed to start, bad XM
 
 The bot reconnects and rejoins the room on its own. Messages produced while it's away are held (up to 200) and posted on rejoin.
 
+## Docker
+
+The image runs the bot as a non-root user `agent` (Claude Code refuses `bypassPermissions` as root). It contains the locked dependencies and the Claude CLI bundled with `claude-agent-sdk`; to update Claude Code, bump the SDK in `uv.lock` and rebuild. Auto-updates are off.
+
+### Mounts and environment
+
+| Path in the container | What | Notes |
+|---|---|---|
+| `/config/config.toml` | Your config, read-only | Set `claude.cwd = "/workspace"` (absolute: relative paths resolve against the config file's directory) |
+| `/workspace` | The project Claude works on | Bind mount |
+| `/home/agent/.claude` | Claude's sessions, settings and login | Named volume, so `/resume` and settings survive restarts |
+
+Secrets go in `.env`, never in the image or the config:
+
+```sh
+XMPP_PASSWORD=…
+CLAUDE_CODE_OAUTH_TOKEN=…     # or ANTHROPIC_API_KEY=…, not both
+UID=1000                      # `id -u` of the workspace owner
+GID=1000                      # `id -g`
+WORKSPACE=/path/to/project    # default ./workspace
+```
+
+**File ownership:** the container user has uid/gid 1000 by default. Files Claude creates in `/workspace` get that owner on the host. If your uid differs, set `UID`/`GID` in `.env` (compose passes them as build args) or build with `--build-arg UID=$(id -u) --build-arg GID=$(id -g)`. Changing them requires a rebuild.
+
+### With compose
+
+```sh
+cp config.example.toml config.toml   # set claude.cwd = "/workspace"
+$EDITOR config.toml .env
+docker compose up -d --build
+docker compose logs -f
+```
+
+`compose.yaml` uses `init: true` (to reap the CLI's child processes), `restart: unless-stopped`, and the three mounts above. `docker compose stop` sends SIGTERM and the bot shuts down cleanly.
+
+### Without compose
+
+```sh
+docker build -t claude-xmpp --build-arg UID=$(id -u) --build-arg GID=$(id -g) .
+docker run -d --name claude-xmpp --init --restart unless-stopped --env-file .env \
+  -v "$PWD/config.toml:/config/config.toml:ro" \
+  -v /path/to/project:/workspace \
+  -v claude-home:/home/agent/.claude \
+  claude-xmpp
+```
+
+Extra options go after the image name, replacing the default `--config /config/config.toml`, e.g. `claude-xmpp --config /config/config.toml --debug`.
+
 ## Using it
 
 Type in the room. Every message from an allowed user goes to Claude. If Claude is busy, the message is queued and the bot says how many are ahead.
@@ -69,7 +155,7 @@ These run in the bot, not in Claude:
 | Command | What it does |
 |---|---|
 | `/help` | Commands and reply syntax |
-| `/status` | Idle / working, queue, open prompts, session ID, model, mode, cost |
+| `/status` | Idle / working, queue, open prompts, session ID, model, mode, cost, auth |
 | `/stop` | Interrupt Claude, drop queued messages, cancel open prompts |
 | `/plan [off]` | Enter plan mode, or go back to the previous mode |
 | `/mode [mode]` | Show or set the permission mode |
@@ -97,7 +183,7 @@ Examples: `y`, `n qwert use the other file`, `2`, `xkcdz 1,3`.
 - **Allowlisted users can run tools on this machine** as the user running the bot: shell commands, file edits, network access. Only allowlist people you would give a shell to.
 - Access control depends on the room showing real JIDs, and on the XMPP server being trusted to report them. Use a members-only room on a server you trust.
 - Prefer `permission_mode = "default"` and a short `allowed_tools` list. `bypassPermissions` skips every prompt and is disabled unless `allow_bypass = true`.
-- Point `cwd` at the project you want Claude to work on, not your home directory.
+- Point `cwd` at the project you want Claude to work on, not your home directory. In Docker, Claude only sees `/workspace` and its own home, which limits what a mistake can reach, but it still has network access and can use your credentials.
 - Keep the password out of `config.toml` with `XMPP_PASSWORD` if the file might be shared.
 
 ## Development

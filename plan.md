@@ -234,7 +234,7 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
 - Smoke test: with a real config and no XMPP server, the bot started the Claude CLI, tried to connect, and exited 0 on SIGTERM.
 - 198 tests pass (8 new in `tests/test_main.py`). The final layout gains `tests/test_main.py`.
 
-## Step 9 — Docker deployment (`Dockerfile`, `.dockerignore`, `compose.yaml`)
+## Step 9 — Docker deployment (`Dockerfile`, `.dockerignore`, `compose.yaml`) ✅ done (Docker checks pending)
 Base: Astral's uv images on Debian trixie-slim. Alpine was considered and dropped: `claude-agent-sdk` has no musllinux wheel, so on Alpine the bundled Claude CLI can't be used and Claude Code would need a separate musl install with extra workarounds. On glibc everything comes from `uv.lock`.
 
 Constraints found while planning:
@@ -296,7 +296,28 @@ Open points to check during the step:
 - README has a Docker section (build, `.env`, mounts, compose) and the Authentication section above.
 - `/status` shows the auth source; with only `CLAUDE_CODE_OAUTH_TOKEN` set it doesn't report an API key.
 
+**Notes (done):**
+- Files: `Dockerfile`, `.dockerignore`, `compose.yaml`; `.gitignore` gains `.env` and `/workspace/` (the default compose workspace dir).
+- **Not built yet:** this box has no Docker or Podman. The four Docker "done when" checks and the `docker stop` exit-code check still need a machine with Docker; run them at the start of Step 10.
+- Checked here instead: the two builder `uv sync` commands with the same env vars in a scratch copy. No dev dependencies, the project installs as a regular package, `claude-xmpp --help` runs from the venv. The venv is 336 MB, nearly all of it the bundled CLI (280 MB), so expect an image of roughly 500 MB.
+- The bundled CLI is mode 0755 in the wheel, and `COPY --from` keeps modes, so the non-root user can run it.
+- Deviations / additions:
+  - `UID`/`GID` build args (default 1000) instead of documenting `--user`. A `--user` uid without a matching account has no writable `HOME`, and the named volume would be owned by 1000. Compose reads them from `.env`.
+  - The image creates `/home/agent/.claude` owned by `agent`, so Docker initialises the named volume with that owner (otherwise it would be root-owned).
+  - Builder layer 2 copies only `pyproject.toml uv.lock README.md src/`, not the whole context.
+  - `PYTHONUNBUFFERED=1` so logs show up in `docker logs` right away.
+  - Compose: `image: claude-xmpp` so `docker run` can reuse the compose build; the workspace mount is `${WORKSPACE:-./workspace}`.
+  - `~/.claude.json` (CLI state outside `~/.claude`) isn't in the volume. The token in the env covers auth, so this only loses minor CLI state across restarts.
+- Auth source:
+  - The init message's `apiKeySource` arrives only with each turn. The connect handshake (`get_server_info()`) has no `apiKeySource`, but it has `account.subscriptionType` (e.g. `"Claude Pro"`) and `apiProvider`.
+  - `session.describe_auth(api_key_source, plan)`: `API key (<source>)`, `subscription (<plan>)` when the source is `"none"`, or `<plan> account (confirmed on the first turn)` before any turn. `Status.auth` holds it, `/status` shows `auth: …` (`unknown until the first turn` when nothing is known yet).
+  - Logged at INFO: CLI version, account plan and provider on connect; the auth line when `apiKeySource` first arrives or changes.
+  - Not verified live with only `CLAUDE_CODE_OAUTH_TOKEN` set (this box uses a stored login). The SDK documents `"none"` for "no API key in use", which is what a token gives.
+- README: Authentication section (token, giving it to the bot, precedence, checking, subscription vs API key) replaces the one-line prerequisite; Docker section (mounts, `.env`, ownership, compose, plain `docker run`); `/status` row mentions auth. `config.example.toml` has a Docker `cwd` hint.
+- 200 tests pass (2 new: `describe_auth`, auth in status from the account and then from init; `/status` test checks the auth line).
+
 ## Step 10 — Verification
+- Step 9's Docker checks (build, `--help`, `id`, bundled CLI `--version`, `docker stop` exit 0, `/status` auth line with only the token).
 - `uv run pytest`: all green.
 - End-to-end (manual, needs an XMPP account, a room and Claude auth):
   1. `uv run claude-xmpp --config config.toml`

@@ -1,0 +1,15 @@
+.venv
+.git
+.gitignore
+slixmpp/
+.pytest_cache
+**/__pycache__
+*.pyc
+config.toml
+.env
+tests/
+*.md
+!README.md
+Dockerfile
+.dockerignore
+compose.yaml

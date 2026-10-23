@@ -110,6 +110,7 @@ class Router:
             f"model: {s.model or 'default'} · mode: {s.mode or 'default'}",
             f"cost: {format_cost(s.session_cost_usd)} this session · "
             f"{format_cost(s.total_cost_usd)} total",
+            f"auth: {s.auth or 'unknown until the first turn'}",
         ]
         await self.session.say("\n".join(lines))
 
@@ -195,7 +196,7 @@ COMMANDS: dict[str, Command] = {
     c.name: c
     for c in (
         Command("help", "/help", "this help", Router._help),
-        Command("status", "/status", "session, model, mode, cost", Router._status),
+        Command("status", "/status", "session, model, mode, cost, auth", Router._status),
         Command("stop", "/stop", "interrupt Claude, drop queued messages and open prompts", Router._stop),
         Command("plan", "/plan [off]", "enter or leave plan mode", Router._plan),
         Command("mode", "/mode [mode]", "show or set the permission mode", Router._mode),

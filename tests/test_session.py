@@ -332,3 +332,37 @@ async def test_approval_timeout(tmp_path, out):
         assert len(s.registry) == 0
     finally:
         await s.close()
+
+
+def test_describe_auth():
+    from claude_xmpp_agent.session import describe_auth
+    assert describe_auth(None, None) is None
+    assert describe_auth(None, "Claude Max") == "Claude Max account (confirmed on the first turn)"
+    assert describe_auth("none", "Claude Max") == "subscription (Claude Max)"
+    assert describe_auth("none", None) == "no API key (subscription login or token)"
+    assert describe_auth("ANTHROPIC_API_KEY", "Claude Max") == "API key (ANTHROPIC_API_KEY)"
+
+
+async def test_status_auth_from_account_then_init(tmp_path, out):
+    class AccountClient(FakeClient):
+        async def get_server_info(self):
+            return {"commands": [], "account": {"subscriptionType": "Claude Pro"}}
+
+    s = Session(make_config(tmp_path), out.append, client_factory=AccountClient)
+    await s.start()
+    try:
+        assert s.status().auth == "Claude Pro account (confirmed on the first turn)"
+        AccountClient.instances[-1].script = [
+            init(apiKeySource="none"), AssistantMessage([TextBlock("hi")], "m"), result(),
+        ]
+        await s.submit("hello")
+        await settle(s)
+        assert s.status().auth == "subscription (Claude Pro)"
+        AccountClient.instances[-1].script = [
+            init(apiKeySource="ANTHROPIC_API_KEY"), result(),
+        ]
+        await s.submit("again")
+        await settle(s)
+        assert s.status().auth == "API key (ANTHROPIC_API_KEY)"
+    finally:
+        await s.close()

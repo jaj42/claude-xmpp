@@ -69,6 +69,24 @@ class Status:
     session_cost_usd: float
     total_cost_usd: float
     connected: bool
+    auth: str | None = None
+
+
+def describe_auth(api_key_source: str | None, plan: str | None) -> str | None:
+    """One-line description of the credential Claude uses.
+
+    `api_key_source` is the init message's `apiKeySource` (sent with each turn):
+    "ANTHROPIC_API_KEY", "apiKeyHelper", "/login managed key", or "none" when no
+    API key is used (a claude.ai login or `CLAUDE_CODE_OAUTH_TOKEN`). Before the
+    first turn only the account's plan from the connect handshake is known.
+    """
+    if api_key_source and api_key_source != "none":
+        return f"API key ({api_key_source})"
+    if api_key_source == "none":
+        return f"subscription ({plan})" if plan else "no API key (subscription login or token)"
+    if plan:
+        return f"{plan} account (confirmed on the first turn)"
+    return None
 
 
 async def _call(cb: Callable[..., Any] | None, *args: Any) -> None:
@@ -112,6 +130,8 @@ class Session:
         self.mode: str | None = config.claude.permission_mode
         self.slash_commands: list[str] = []
         self.busy = False
+        self.api_key_source: str | None = None
+        self.account_plan: str | None = None
 
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._worker: asyncio.Task[None] | None = None
@@ -185,6 +205,15 @@ class Session:
             cmds = info.get("commands") or []
             names = [c.get("name") if isinstance(c, dict) else str(c) for c in cmds]
             self.slash_commands = [n for n in names if n]
+            account = info.get("account")
+            if isinstance(account, dict):
+                self.account_plan = account.get("subscriptionType") or None
+                log.info(
+                    "Claude CLI %s, account plan: %s, provider: %s",
+                    info.get("claude_code_version", "?"),
+                    self.account_plan or "none",
+                    account.get("apiProvider", "?"),
+                )
         self._reader = asyncio.create_task(self._read(client), name="claude-reader")
 
     async def _disconnect(self) -> None:
@@ -306,6 +335,10 @@ class Session:
             self.mode = d.get("permissionMode") or self.mode
             if d.get("slash_commands"):
                 self.slash_commands = list(d["slash_commands"])
+            src = d.get("apiKeySource")
+            if src and src != self.api_key_source:
+                self.api_key_source = src
+                log.info("Claude auth: %s", describe_auth(src, self.account_plan))
             return
         if isinstance(msg, ResultMessage):
             self.session_id = msg.session_id or self.session_id
@@ -345,6 +378,7 @@ class Session:
             session_cost_usd=self._cost_current,
             total_cost_usd=self._cost_base + self._cost_current,
             connected=self.connected,
+            auth=describe_auth(self.api_key_source, self.account_plan),
         )
 
     async def say(self, text: str) -> None:

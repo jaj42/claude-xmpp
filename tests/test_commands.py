@@ -32,6 +32,7 @@ class FakeSession:
         self.mode_before_plan = "default"
         self.interrupt_result = True
         self.busy = False
+        self.auth = None
 
     async def say(self, text):
         self.said.append(text)
@@ -60,7 +61,7 @@ class FakeSession:
         return Status(
             session_id=self.session_id, model=self.model, mode=self.mode, busy=self.busy,
             queued=2, open_prompts=len(self.registry), session_cost_usd=0.0123,
-            total_cost_usd=1.5, connected=True,
+            total_cost_usd=1.5, connected=True, auth=self.auth,
         )
 
 
@@ -157,6 +158,10 @@ async def test_status(router, session):
     assert "`sess-1`" in text
     assert "mode: default" in text
     assert "$0.0123 this session · $1.50 total" in text
+    assert "auth: unknown until the first turn" in text
+    session.auth = "subscription (Claude Max)"
+    await router.handle("/status")
+    assert "auth: subscription (Claude Max)" in session.said[1]
 
 
 async def test_stop(router, session):

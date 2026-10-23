@@ -1,0 +1,20 @@
+services:
+  claude-xmpp:
+    build:
+      context: .
+      args:
+        # Set UID/GID in .env to the owner of WORKSPACE (see `id -u`, `id -g`),
+        # so files Claude writes belong to you on the host.
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    image: claude-xmpp
+    init: true                # reaps the Claude CLI's child processes
+    restart: unless-stopped
+    env_file: .env            # XMPP_PASSWORD, CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+    volumes:
+      - ./config.toml:/config/config.toml:ro
+      - ${WORKSPACE:-./workspace}:/workspace
+      - claude-home:/home/agent/.claude
+
+volumes:
+  claude-home:
