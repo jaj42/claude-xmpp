@@ -1,0 +1,23 @@
+[project]
+name = "claude-xmpp-agent"
+version = "0.1.0"
+description = "Control a Claude Code session from an XMPP group chat"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "claude-agent-sdk>=0.2.173",
+    "slixmpp>=1.17.0",
+]
+
+[project.scripts]
+claude-xmpp = "claude_xmpp_agent.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.13.4,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
