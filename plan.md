@@ -90,7 +90,7 @@ tests/  test_config.py test_approvals.py test_render.py test_commands.py test_ga
 - Pure helpers `parse_reply`, `parse_answer`, `parse_answers` are public for the renderer and tests.
 - 83 tests pass (58 new).
 
-## Step 4 — Rendering (`render.py`) — pure logic
+## Step 4 — Rendering (`render.py`) — pure logic ✅ done
 - TextBlock → text.
 - ToolUseBlock:
   - normal: one line (`🔧 Bash: \`cmd\``, `✏️ Edit path`, `📖 Read path`)
@@ -104,6 +104,19 @@ tests/  test_config.py test_approvals.py test_render.py test_commands.py test_ga
 - `chunk(text, max)`: split on line boundaries and never inside a ``` fence (close and reopen it across chunks). Use XEP-0393 styling.
 
 **Done when:** `tests/test_render.py` passes.
+
+**Notes (done):**
+- API: `Renderer(verbosity, cwd=None, result_preview=600).render(msg) -> list[str]` (one chat message per item; chunking is the sender's job). It is stateful: it remembers `tool_use_id → name` so results can be labelled and prompt-tool results skipped.
+- Pure helpers: `tool_line`, `result_text`, `markdown_to_chat`, `format_permission(id, tool, input, *, title, description, reason, blocked_path, always, cwd)`, `describe_suggestions(ctx.suggestions)` (text for the `a` option; pass None to `always` to hide it), `format_question(id, questions)`, `format_plan(id, plan)`, `chunk(text, max)`, `format_duration`, `format_cost`.
+- Tool lines: Bash, Edit/MultiEdit/Write/NotebookEdit, Read, Grep/Glob, WebFetch/WebSearch, Task/Agent, TodoWrite (`📋 Todos 1/3 · <active>`), `mcp__srv__tool` → `🔌 srv/tool {json}`, anything else → `🔧 Name {json}`. Paths under `cwd` are shown relative. `AskUserQuestion` and `ExitPlanMode` calls and results are never shown (their prompts cover them).
+- Deviations / extra rules:
+  - Quiet also hides the `✓ done` line; errors and `⏹ stopped` are still shown. Stopped is detected via `ResultMessage.terminal_reason` starting with `aborted`.
+  - Subagent output (`parent_tool_use_id` set) is hidden unless verbose, then prefixed `  ↳ `.
+  - Assistant text goes through a light Markdown → XEP-0393 pass (`**b**` → `*b*`, headings → bold, bullets → `•`, `[t](u)` → `t (u)`); `__x__` is left alone because it's usually a dunder. Code fences are untouched.
+  - Extra messages: `AssistantMessage.error` → `⚠️ API error`, `ConversationResetMessage` → `🧹 conversation cleared` (the session should reset its cost total on it), failed `TaskNotificationMessage` → warning.
+  - Permission prompts preview the input: Bash command in a fence, Edit as a `-/+` diff (first 3 edits), Write with line count and head, MCP tools as JSON.
+  - `chunk` hard-splits lines longer than a chunk, avoids an empty fence when a split falls right after an opener, and closes a fence left open in the input.
+- 132 tests pass (49 new).
 
 ## Step 5 — Claude session (`session.py`)
 - Builds `ClaudeAgentOptions` from config:
