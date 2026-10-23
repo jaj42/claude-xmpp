@@ -49,7 +49,7 @@ tests/  test_config.py test_approvals.py test_render.py test_commands.py test_ga
   - Messages: `AssistantMessage`, `UserMessage`, `SystemMessage(subtype, data)`, `ResultMessage(subtype, duration_ms, is_error, num_turns, session_id, total_cost_usd, result, …)`. Blocks: `TextBlock`, `ThinkingBlock`, `ToolUseBlock`, `ToolResultBlock(is_error)`, plus `ServerToolUseBlock`/`ServerToolResultBlock`.
   - `can_use_tool` is skipped for tools allowed by `allowed_tools`, by the permission mode or by settings allow rules. A `PreToolUse` hook that returns *allow* also skips it, so the dummy hook (Step 5) must return no decision.
 
-## Step 2 — Configuration (`config.py`, `config.example.toml`)
+## Step 2 — Configuration (`config.py`, `config.example.toml`) ✅ done
 - Dataclasses loaded with `tomllib`.
 - `[xmpp]`: jid, password (fallback `$XMPP_PASSWORD`), room, nick, room_password
 - `[access]`: `allowed_jids`
@@ -58,6 +58,15 @@ tests/  test_config.py test_approvals.py test_render.py test_commands.py test_ga
 - Validate: room and allowlist are not empty; JIDs are normalised to bare form.
 
 **Done when:** `tests/test_config.py` passes (load, env fallback, validation errors).
+
+**Notes (done):**
+- API: `load_config(path, env=None) -> Config` (frozen dataclasses `XmppConfig`, `AccessConfig`, `ClaudeConfig`, `UiConfig`); `ConfigError` for every failure; `normalize_jid()` is public so the bot (Step 7) can reuse it.
+- JIDs are normalised with `slixmpp.JID(...).bare` (lower-cases, strips the resource). `allowed_jids` is a `frozenset`. The room must contain `@`.
+- Extra validation beyond the plan: unknown keys are rejected (catches typos); `permission_mode`, `setting_sources`, `verbosity` are checked against fixed sets; `bypassPermissions` in config requires `allow_bypass = true`; `max_chunk >= 200`; `approval_timeout > 0`.
+- `claude.cwd` defaults to `.`, supports `~`, and a relative path is resolved against the config file's directory. It must exist.
+- The config password wins over `$XMPP_PASSWORD`.
+- `pyproject.toml` now sets `testpaths = ["tests"]` (pytest was collecting the `slixmpp/` checkout) and `asyncio_mode = "auto"`.
+- 25 tests pass.
 
 ## Step 3 — Approvals registry (`approvals.py`) — pure logic
 - IDs: 5 letters from `a-km-z`, unique among open items.

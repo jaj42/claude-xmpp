@@ -1,0 +1,25 @@
+# Copy to config.toml and edit. config.toml is git-ignored.
+
+[xmpp]
+jid = "claude-bot@example.org"
+# password = "..."              # or leave unset and export XMPP_PASSWORD
+room = "claude@conference.example.org"   # must be non-anonymous; members-only recommended
+nick = "claude"
+# room_password = "..."
+
+[access]
+# Real (bare) JIDs allowed to talk to Claude. Messages from anyone else are ignored.
+allowed_jids = ["alice@example.org"]
+
+[claude]
+cwd = "."                       # relative paths are resolved against this file's directory
+# model = "claude-sonnet-5-5"
+permission_mode = "default"     # default | acceptEdits | plan | dontAsk | auto | bypassPermissions
+allowed_tools = []              # tools that never need approval, e.g. ["Read", "Grep", "Glob"]
+setting_sources = ["user", "project", "local"]
+allow_bypass = false            # must be true to use bypassPermissions (config or /mode)
+
+[ui]
+verbosity = "normal"            # quiet | normal | verbose
+max_chunk = 3000                # max characters per XMPP message
+# approval_timeout = 600        # seconds before an unanswered prompt is denied
