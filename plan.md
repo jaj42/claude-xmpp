@@ -21,7 +21,7 @@ Final layout (`/workspace/claude_xmpp_agent/`):
 ```
 pyproject.toml  config.example.toml  README.md  plan.md
 src/claude_xmpp_agent/  __main__.py config.py bot.py session.py approvals.py commands.py render.py
-tests/  test_config.py test_approvals.py test_render.py test_commands.py test_gating.py
+tests/  test_config.py test_approvals.py test_render.py test_session.py test_commands.py test_gating.py
 ```
 
 ---
@@ -118,7 +118,7 @@ tests/  test_config.py test_approvals.py test_render.py test_commands.py test_ga
   - `chunk` hard-splits lines longer than a chunk, avoids an empty fence when a split falls right after an opener, and closes a fence left open in the input.
 - 132 tests pass (49 new).
 
-## Step 5 — Claude session (`session.py`)
+## Step 5 — Claude session (`session.py`) ✅ done
 - Builds `ClaudeAgentOptions` from config:
   - `system_prompt` preset `claude_code` + an `append` note: the user is on XMPP, so keep replies chat-sized and in plain text
   - `can_use_tool`
@@ -135,6 +135,20 @@ tests/  test_config.py test_approvals.py test_render.py test_commands.py test_ga
   - The output callback is injected, so the session has no XMPP dependency.
 
 **Done when:** import smoke test passes. Optionally, a local run where the output callback prints to stdout answers a prompt.
+
+**Notes (done):**
+- API: `Session(config, output, registry=None, *, on_busy=None, client_factory=ClaudeSDKClient)`; `start(resume=None)`, `close()`, `submit(text)`, `interrupt() -> bool` (False when idle with nothing queued or open), `restart(resume=None)`, `set_mode(m)`, `set_model(m)`, `status() -> Status`, `say(text)`, `build_options(resume)`. Attributes: `session_id`, `model`, `mode`, `slash_commands`, `busy`, `mode_before_plan`. `output` and `on_busy` may be sync or async (the bot uses `on_busy` for chat states in Step 7).
+- Deviation: instead of `receive_response()` per query, a **reader task** iterates `receive_messages()` for the whole connection, and the worker waits for the turn's `ResultMessage`. This also shows messages that arrive between turns (background tasks waking the agent).
+- If the CLI stream ends or fails, the reader posts a warning, cancels open prompts and ends the turn. The next prompt reconnects with `resume=<last session_id>`.
+- Cost: `ResultMessage.total_cost_usd` is a running total per conversation that restarts from zero after `ConversationResetMessage` (`/clear`) or a reconnect. `Status` has `session_cost_usd` and `total_cost_usd` (since the bot started).
+- Model, mode and `slash_commands` come from the `init` SystemMessage. Before the first turn, `slash_commands` is filled from `get_server_info()["commands"]`.
+- `ExitPlanMode` approval returns `updated_permissions=[setMode → mode used before /plan]` (default if unknown), so Claude leaves plan mode. Plan feedback → deny with `Plan not approved. User feedback: …`.
+- `a` passes `ctx.suggestions` as `updated_permissions`. With no suggestions, `a` isn't offered in the prompt, and if typed anyway it allows once with a note.
+- Cancelled prompts (`/stop`, restart, CLI exit) → deny with `interrupt=True`. `approval_timeout` → deny without interrupt, `⌛ <id> timed out`.
+- The dummy `PreToolUse` hook is kept as documented, but this SDK version keeps stdin open by itself whenever `can_use_tool` is set (`Query._has_bidirectional_needs`).
+- `system_prompt` append text: `SYSTEM_APPEND`.
+- Tests: `tests/test_session.py` (19 tests) uses a fake client: turns, queueing, interrupt, cost across `/clear`, restart/resume, reconnect after CLI exit, permission y/n/a, questions, plan approve/feedback, timeout. 151 tests pass.
+- A live run with the bundled CLI answered a prompt (`pong`, `✓ done · 1 turn · $0.16 · 4.9s`).
 
 ## Step 6 — Harness commands (`commands.py`)
 - Dispatch only for messages starting with `/`. Unknown commands go to Claude as-is (SDK commands like `/clear`, `/compact`, skills).
