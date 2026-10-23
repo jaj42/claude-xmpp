@@ -211,7 +211,7 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
 - Not tested live: no XMPP server here. That's left to Step 9.
 - 190 tests pass (18 new in `tests/test_gating.py`: gating, ordering, chunked output, outbox, chat states, anonymous-room warning, rejoin/ban/nick change, reconnect guard).
 
-## Step 8 — Entry point and docs (`__main__.py`, `README.md`)
+## Step 8 — Entry point and docs (`__main__.py`, `README.md`) ✅ done
 - CLI: `--config`, `--debug`. Logging goes to stderr. One asyncio loop runs the bot and the session together. Shutdown on SIGINT/SIGTERM disconnects both.
 - README covers:
   - prerequisites (Claude auth, members-only non-anonymous MUC, bot account)
@@ -222,6 +222,16 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
   - security notes (allowlisted users can run tools on this machine)
 
 **Done when:** `uv run claude-xmpp --help` works.
+
+**Notes (done):**
+- API: `parse_args(argv)`, `setup_logging(debug)`, `async run(config, *, resume=None, stop=None, make_parts=_default_parts) -> int`, `main(argv=None)`. `_default_parts(config)` does the Step 7 wiring and returns `(bot, session)`; tests swap it for fakes.
+- Extra option: `--resume SESSION_ID` passes `resume=` to `Session.start()`. `-c` is a short form of `--config` (default `config.toml`).
+- Order: the Claude session starts first, so a missing login fails fast without touching XMPP. Then `bot.start()`. The loop waits on a stop event set by SIGINT/SIGTERM (`loop.add_signal_handler`; Ctrl+C falls back to `KeyboardInterrupt` where that isn't supported) and checks `bot.failed` every second. Shutdown: `session.close()`, then `bot.stop()`.
+- Exit codes: 0 normal, 1 fatal (Claude start failed, bad password, banned), 2 config error (printed as `claude-xmpp: <error>`).
+- Logging: `--debug` sets everything to DEBUG; otherwise INFO, with `slixmpp` at WARNING (it logs every stream event at INFO).
+- README: prerequisites, room setup, config table, running, exit codes, harness commands, reply syntax, security notes, development.
+- Smoke test: with a real config and no XMPP server, the bot started the Claude CLI, tried to connect, and exited 0 on SIGTERM.
+- 198 tests pass (8 new in `tests/test_main.py`). The final layout gains `tests/test_main.py`.
 
 ## Step 9 — Verification
 - `uv run pytest`: all green.
