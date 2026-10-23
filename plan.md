@@ -181,7 +181,7 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
   - `/help` also includes the approval reply syntax.
 - 172 tests pass (21 new).
 
-## Step 7 — XMPP bot (`bot.py`)
+## Step 7 — XMPP bot (`bot.py`) ✅ done
 - `ClientXMPP` with xep_0030, xep_0045, xep_0199 (keepalive), xep_0085 (chat states).
 - `session_start`: `send_presence()`, then `join_muc_wait(room, nick, maxstanzas=0)`.
 - On join, warn if real JIDs aren't visible (semi-anonymous room).
@@ -194,6 +194,22 @@ tests/  test_config.py test_approvals.py test_render.py test_session.py test_com
 - Auto-reconnect and rejoin.
 
 **Done when:** `tests/test_gating.py` passes (stub messages and roster: allowed passes; unknown, missing JID and history are dropped).
+
+**Notes (done):**
+- API: `Bot(config, router=None)` (a `ClientXMPP`); `start()` connects (joining happens on `session_start`), `stop()` leaves and disconnects. `output(text)` is the session's output callback and `set_busy(busy)` its `on_busy` callback. `gate(msg) -> str | None` is the pure-ish filter. Attributes: `joined`, `nick` (actual nick in the room), `busy`, `failed` (fatal reason: bad password or banned; Step 8 should exit on it).
+- Wiring for Step 8: `bot = Bot(config)`, `session = Session(config, output=bot.output, on_busy=bot.set_busy)`, `bot.router = Router(session, config)`.
+- Deviation: the output method is `output()`, not `send()`, because `send()` would shadow slixmpp's `XMLStream.send()` that every stanza goes through.
+- Plugins: xep_0030, xep_0045, xep_0085, xep_0199 (keepalive every 120 s, 30 s timeout), xep_0203 (for `<delay>`).
+- Gating drops: non-groupchat, other rooms, empty bodies, messages without a nick (room notices), our own nick, `<delay>` history, occupants with no real JID, and JIDs not in the allowlist. The last two post `🚫 ignoring <nick>: …` once per nick (and log every time).
+- Allowed messages go through an inbox queue to one task that calls `router.handle()`, so they're processed in order. A router exception is posted as `⚠️ Type: msg`.
+- Output: `render.chunk(text, max_chunk)` → one groupchat message per chunk. While not in the room, chunks wait in an outbox (last 200 kept) and are flushed on (re)join.
+- Chat states: standalone `composing` / `active` messages. Because clients clear the typing indicator on a new message, `composing` is re-sent after each post while busy and after rejoining.
+- Joining: `join_muc_wait(maxstanzas=0, timeout=60)` with the room password. Nick conflict → retry with `_` appended. Other errors and timeouts retry with backoff (2 s … 5 min); `forbidden`/`registration-required` log a hint about membership.
+- Non-anonymous check after join: status code 100 in the self-presence, or any occupant presence carrying a JID; otherwise a warning is posted.
+- Rejoin: an `unavailable` self-presence (kick, room shutdown) schedules a rejoin; 303 (nick change) updates `nick`; 301 (ban) sets `failed` and stops.
+- Reconnect: on `disconnected` (not during `stop()` or after a fatal error) reconnect after 5 s, skipped when slixmpp is already connected or reconnecting (xep_0199 calls `reconnect()` itself on ping timeout). `failed_auth` sets `failed` and disconnects.
+- Not tested live: no XMPP server here. That's left to Step 9.
+- 190 tests pass (18 new in `tests/test_gating.py`: gating, ordering, chunked output, outbox, chat states, anonymous-room warning, rejoin/ban/nick change, reconnect guard).
 
 ## Step 8 — Entry point and docs (`__main__.py`, `README.md`)
 - CLI: `--config`, `--debug`. Logging goes to stderr. One asyncio loop runs the bot and the session together. Shutdown on SIGINT/SIGTERM disconnects both.
