@@ -156,6 +156,7 @@ class Session:
             permission_mode=self.mode,  # type: ignore[arg-type]
             allowed_tools=list(c.allowed_tools),
             setting_sources=list(c.setting_sources),  # type: ignore[arg-type]
+            mcp_servers=dict(self.config.mcp_servers),  # type: ignore[arg-type]
             system_prompt={"type": "preset", "preset": "claude_code", "append": SYSTEM_APPEND},
             can_use_tool=self._can_use_tool,
             hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_keep_stream_open])]},

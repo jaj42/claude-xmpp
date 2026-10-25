@@ -81,8 +81,28 @@ $EDITOR config.toml
 | `[ui]` | `verbosity` | `normal` | `quiet` (text + errors), `normal` (+ one line per tool call), `verbose` (+ tool results, subagents) |
 | | `max_chunk` | `3000` | Max characters per chat message; longer output is split |
 | | `approval_timeout` | none | Seconds before an unanswered prompt is denied |
+| `[mcp_servers.<name>]` | | none | MCP servers for Claude, see below |
 
 Unknown keys are rejected, so typos show up at startup.
+
+### MCP servers
+
+Each `[mcp_servers.<name>]` table adds one server, with the same fields as Claude Code's `.mcp.json`:
+
+```toml
+[mcp_servers.sfar]
+url = "http://mcp.example.org:1234/mcp"              # type = "http" by default, or "sse"
+headers = { Authorization = "Bearer ${SFAR_TOKEN}" }
+
+[mcp_servers.files]
+command = "npx"                                       # type = "stdio" when there's no url
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+env = { SOME_VAR = "value" }
+```
+
+`${VAR}` in any value is replaced by that environment variable when the bot starts, so tokens can go in `.env` (`SFAR_TOKEN=…`) instead of the config. If a referenced variable is unset or empty, the bot refuses to start (exit code `2`).
+
+These servers are added to any configured in Claude's own settings (`setting_sources`). Their tools are called `mcp__<name>__<tool>` and need approval like any other tool; put `"mcp__<name>"` in `allowed_tools` to allow all of one server's tools.
 
 ## Running
 

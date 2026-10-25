@@ -143,3 +143,64 @@ def test_missing_access_section(tmp_path):
 def test_claude_and_ui_validation(tmp_path, extra, match):
     with pytest.raises(ConfigError, match=match):
         load_config(write(tmp_path, MINIMAL + "\n" + extra + "\n"), env={})
+
+
+# -- [mcp_servers] ---------------------------------------------------------------
+
+MCP = """
+[mcp_servers.sfar]
+url = "http://host.example.org:1234/mcp"
+headers = { Authorization = "Bearer ${SFAR_TOKEN}" }
+
+[mcp_servers.files]
+command = "npx"
+args = ["-y", "server-files", "${HOME}/docs"]
+env = { LOG = "quiet" }
+"""
+
+
+def test_mcp_servers_default_empty(tmp_path):
+    assert load_config(write(tmp_path, MINIMAL), env={}).mcp_servers == {}
+
+
+def test_mcp_servers_parsed_and_expanded(tmp_path):
+    cfg = load_config(write(tmp_path, MINIMAL + MCP), env={"SFAR_TOKEN": "t0k", "HOME": "/h"})
+    assert cfg.mcp_servers == {
+        "sfar": {
+            "type": "http",
+            "url": "http://host.example.org:1234/mcp",
+            "headers": {"Authorization": "Bearer t0k"},
+        },
+        "files": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "server-files", "/h/docs"],
+            "env": {"LOG": "quiet"},
+        },
+    }
+
+
+def test_mcp_sse_type(tmp_path):
+    text = MINIMAL + '[mcp_servers.s]\ntype = "sse"\nurl = "http://x/sse"\n'
+    assert load_config(write(tmp_path, text), env={}).mcp_servers["s"] == {"type": "sse", "url": "http://x/sse"}
+
+
+def test_mcp_unset_env_var(tmp_path):
+    with pytest.raises(ConfigError, match=r"headers.Authorization: \$\{SFAR_TOKEN\} is not set"):
+        load_config(write(tmp_path, MINIMAL + MCP), env={"HOME": "/h"})
+
+
+@pytest.mark.parametrize(
+    ("extra", "match"),
+    [
+        ('[mcp_servers.s]\ntype = "ws"\nurl = "x"', "type must be one of"),
+        ("[mcp_servers.s]\nargs = []", "command is required"),
+        ('[mcp_servers.s]\nurl = "x"\ncommand = "y"', "unknown key"),
+        ('[mcp_servers.s]\nurl = "x"\nheaders = { A = 1 }', "table of strings"),
+        ('[mcp_servers."a b"]\nurl = "x"', "name may only contain"),
+        ('[mcp_servers]\ns = "x"', "must be a table"),
+    ],
+)
+def test_mcp_validation(tmp_path, extra, match):
+    with pytest.raises(ConfigError, match=match):
+        load_config(write(tmp_path, MINIMAL + "\n" + extra + "\n"), env={})

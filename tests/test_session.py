@@ -1,6 +1,7 @@
 """Session tests against a fake SDK client (no Claude CLI needed)."""
 
 import asyncio
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -136,6 +137,13 @@ def test_build_options(tmp_path):
     assert "XMPP" in o.system_prompt["append"]
     assert o.can_use_tool is not None
     assert "PreToolUse" in o.hooks
+
+
+def test_build_options_passes_mcp_servers(tmp_path):
+    srv = {"sfar": {"type": "http", "url": "http://x/mcp", "headers": {"Authorization": "Bearer t"}}}
+    cfg = dataclasses.replace(make_config(tmp_path), mcp_servers=srv)
+    assert Session(cfg, print).build_options().mcp_servers == srv
+    assert Session(make_config(tmp_path), print).build_options().mcp_servers == {}
 
 
 async def test_keep_stream_open_hook_returns_no_decision(tmp_path):

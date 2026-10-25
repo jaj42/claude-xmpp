@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from slixmpp.jid import InvalidJID
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto")
 SETTING_SOURCES = ("user", "project", "local")
 VERBOSITIES = ("quiet", "normal", "verbose")
+MCP_TYPES = ("stdio", "http", "sse")
 
 
 class ConfigError(ValueError):
@@ -58,12 +60,15 @@ class Config:
     access: AccessConfig
     claude: ClaudeConfig
     ui: UiConfig = field(default_factory=UiConfig)
+    # name -> server config in the SDK's format, with ${VAR}s already expanded.
+    mcp_servers: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 def load_config(path: str | Path, env: Mapping[str, str] | None = None) -> Config:
     """Read the TOML file at `path` and return a validated Config.
 
-    `env` defaults to os.environ; it supplies the `XMPP_PASSWORD` fallback.
+    `env` defaults to os.environ; it supplies the `XMPP_PASSWORD` fallback
+    and the values of `${VAR}` references in `[mcp_servers]`.
     A relative `claude.cwd` is resolved against the config file's directory.
     """
     path = Path(path)
@@ -80,12 +85,13 @@ def load_config(path: str | Path, env: Mapping[str, str] | None = None) -> Confi
 def parse_config(
     raw: Mapping[str, Any], base_dir: Path, env: Mapping[str, str]
 ) -> Config:
-    _check_keys(raw, {"xmpp", "access", "claude", "ui"}, "top level")
+    _check_keys(raw, {"xmpp", "access", "claude", "ui", "mcp_servers"}, "top level")
     return Config(
         xmpp=_parse_xmpp(_section(raw, "xmpp"), env),
         access=_parse_access(_section(raw, "access")),
         claude=_parse_claude(_section(raw, "claude"), base_dir),
         ui=_parse_ui(_section(raw, "ui")),
+        mcp_servers=_parse_mcp_servers(_section(raw, "mcp_servers"), env),
     )
 
 
@@ -204,6 +210,54 @@ def _parse_ui(sec: Mapping[str, Any]) -> UiConfig:
     return UiConfig(verbosity=verbosity, max_chunk=max_chunk, approval_timeout=timeout)
 
 
+_MCP_NAME = re.compile(r"[A-Za-z0-9_-]+")
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _parse_mcp_servers(
+    sec: Mapping[str, Any], env: Mapping[str, str]
+) -> dict[str, dict[str, Any]]:
+    servers: dict[str, dict[str, Any]] = {}
+    for name, srv in sec.items():
+        where = f"[mcp_servers.{name}]"
+        if not _MCP_NAME.fullmatch(name):
+            raise ConfigError(f"{where}: name may only contain letters, digits, '_' and '-'")
+        if not isinstance(srv, Mapping):
+            raise ConfigError(f"{where} must be a table")
+        kind = _opt_str(srv, "type", where) or ("http" if "url" in srv else "stdio")
+        if kind not in MCP_TYPES:
+            raise ConfigError(f"{where} type must be one of {', '.join(MCP_TYPES)}; got {kind!r}")
+
+        def expand(value: str, key: str) -> str:
+            def sub(m: re.Match[str]) -> str:
+                var = m.group(1)
+                if not env.get(var):
+                    raise ConfigError(f"{where} {key}: ${{{var}}} is not set in the environment")
+                return env[var]
+
+            return _ENV_REF.sub(sub, value)
+
+        if kind == "stdio":
+            _check_keys(srv, {"type", "command", "args", "env"}, where)
+            out: dict[str, Any] = {
+                "type": "stdio",
+                "command": expand(_require_str(srv, "command", where), "command"),
+            }
+            if "args" in srv:
+                out["args"] = [expand(a, "args") for a in _str_list(srv, "args", where, default=[])]
+            if "env" in srv:
+                out["env"] = {k: expand(v, f"env.{k}") for k, v in _str_table(srv, "env", where).items()}
+        else:
+            _check_keys(srv, {"type", "url", "headers"}, where)
+            out = {"type": kind, "url": expand(_require_str(srv, "url", where), "url")}
+            if "headers" in srv:
+                out["headers"] = {
+                    k: expand(v, f"headers.{k}") for k, v in _str_table(srv, "headers", where).items()
+                }
+        servers[name] = out
+    return servers
+
+
 # -- helpers ----------------------------------------------------------------
 
 
@@ -241,3 +295,10 @@ def _str_list(sec: Mapping[str, Any], key: str, where: str, default: list[str]) 
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise ConfigError(f"{where} {key} must be a list of strings")
     return value
+
+
+def _str_table(sec: Mapping[str, Any], key: str, where: str) -> dict[str, str]:
+    value = sec.get(key, {})
+    if not isinstance(value, Mapping) or not all(isinstance(v, str) for v in value.values()):
+        raise ConfigError(f"{where} {key} must be a table of strings")
+    return dict(value)

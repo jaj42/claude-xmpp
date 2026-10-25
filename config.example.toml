@@ -20,6 +20,19 @@ allowed_tools = []              # tools that never need approval, e.g. ["Read", 
 setting_sources = ["user", "project", "local"]
 allow_bypass = false            # must be true to use bypassPermissions (config or /mode)
 
+# MCP servers for Claude, same fields as Claude Code's .mcp.json. ${VAR} in any
+# value is replaced by that environment variable (startup fails if it's unset),
+# so secrets can stay in .env. Tools are named mcp__<name>__<tool>; add
+# "mcp__<name>" to allowed_tools to skip approval for all of a server's tools.
+# [mcp_servers.sfar]
+# url = "http://mcp.example.org:1234/mcp"            # type defaults to "http" ("sse" also works)
+# headers = { Authorization = "Bearer ${SFAR_TOKEN}" }
+#
+# [mcp_servers.files]
+# command = "npx"                                     # stdio server, run inside the container
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+# env = { SOME_VAR = "value" }
+
 [ui]
 verbosity = "normal"            # quiet | normal | verbose
 max_chunk = 3000                # max characters per XMPP message
