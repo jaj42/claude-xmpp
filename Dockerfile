@@ -44,6 +44,13 @@ RUN groupadd --gid "${GID}" agent \
 # Claude CLI is bundled in the claude-agent-sdk wheel (pinned by uv.lock).
 COPY --from=builder /app/.venv /app/.venv
 
+# Expose the bundled CLI as `claude` for shells inside the container
+# (e.g. `docker compose exec claude-xmpp claude`). Fails the build if the
+# SDK ever moves it.
+RUN cli="$(echo /app/.venv/lib/python3.*/site-packages/claude_agent_sdk/_bundled/claude)" \
+    && test -x "$cli" \
+    && ln -s "$cli" /usr/local/bin/claude
+
 ENV PATH=/app/.venv/bin:$PATH \
     HOME=/home/agent \
     DISABLE_AUTOUPDATER=1 \

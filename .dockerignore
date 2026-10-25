@@ -13,3 +13,5 @@ tests/
 Dockerfile
 .dockerignore
 compose.yaml
+home/
+workspace/

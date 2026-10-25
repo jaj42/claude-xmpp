@@ -8,13 +8,15 @@ services:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
     image: claude-xmpp
+    # Rootless podman: map the container user to your host user, otherwise
+    # files land on the host under a subordinate uid (e.g. 100999). Set
+    # USERNS_MODE=keep-id:uid=1000,gid=1000 in .env (same numbers as UID/GID).
+    # Leave unset for Docker.
+    userns_mode: ${USERNS_MODE:-}
     init: true                # reaps the Claude CLI's child processes
     restart: unless-stopped
     env_file: .env            # XMPP_PASSWORD, CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
     volumes:
       - ./config.toml:/config/config.toml:ro
       - ${WORKSPACE:-./workspace}:/workspace
-      - claude-home:/home/agent/.claude
-
-volumes:
-  claude-home:
+      - ./home:/home/agent/.claude

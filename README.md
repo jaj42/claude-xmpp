@@ -31,7 +31,7 @@ The SDK ships its own Claude Code CLI, and the bot runs it with the bot's enviro
    No Claude Code on the host? Use the CLI bundled in the Docker image (build it first, see [Docker](#docker)):
 
    ```sh
-   docker run --rm -it --entrypoint /app/.venv/lib/python3.13/site-packages/claude_agent_sdk/_bundled/claude claude-xmpp setup-token
+   docker run --rm -it --entrypoint claude claude-xmpp setup-token
    ```
 
    The browser can't reach the container's callback, so paste the code the browser shows back into the terminal.
@@ -98,7 +98,7 @@ The bot reconnects and rejoins the room on its own. Messages produced while it's
 
 ## Docker
 
-The image runs the bot as a non-root user `agent` (Claude Code refuses `bypassPermissions` as root). It contains the locked dependencies and the Claude CLI bundled with `claude-agent-sdk`; to update Claude Code, bump the SDK in `uv.lock` and rebuild. Auto-updates are off.
+The image runs the bot as a non-root user `agent` (Claude Code refuses `bypassPermissions` as root). It contains the locked dependencies and the Claude CLI bundled with `claude-agent-sdk`, on the `PATH` as `claude` (e.g. `docker compose exec claude-xmpp claude mcp list`); to update Claude Code, bump the SDK in `uv.lock` and rebuild. Auto-updates are off.
 
 ### Mounts and environment
 
@@ -106,7 +106,7 @@ The image runs the bot as a non-root user `agent` (Claude Code refuses `bypassPe
 |---|---|---|
 | `/config/config.toml` | Your config, read-only | Set `claude.cwd = "/workspace"` (absolute: relative paths resolve against the config file's directory) |
 | `/workspace` | The project Claude works on | Bind mount |
-| `/home/agent/.claude` | Claude's sessions, settings and login | Named volume, so `/resume` and settings survive restarts |
+| `/home/agent/.claude` | Claude's sessions, settings, login and user skills | Bind mount of `./home` (git-ignored), so `/resume` and settings survive restarts |
 
 Secrets go in `.env`, never in the image or the config:
 
@@ -116,9 +116,12 @@ CLAUDE_CODE_OAUTH_TOKEN=…     # or ANTHROPIC_API_KEY=…, not both
 UID=1000                      # `id -u` of the workspace owner
 GID=1000                      # `id -g`
 WORKSPACE=/path/to/project    # default ./workspace
+USERNS_MODE=keep-id:uid=1000,gid=1000   # rootless podman only, same numbers as UID/GID
 ```
 
 **File ownership:** the container user has uid/gid 1000 by default. Files Claude creates in `/workspace` get that owner on the host. If your uid differs, set `UID`/`GID` in `.env` (compose passes them as build args) or build with `--build-arg UID=$(id -u) --build-arg GID=$(id -g)`. Changing them requires a rebuild.
+
+**Rootless podman:** uid 1000 inside the container is not your host uid, it maps to a subordinate uid (see `podman unshare cat /proc/self/uid_map`), so files show up on the host owned by a number like `100999`. Set `USERNS_MODE=keep-id:uid=1000,gid=1000` in `.env` (with `podman run`: `--userns=keep-id:uid=1000,gid=1000`) to map the container user to your own. If the `claude-home` volume was created before this, its files keep the old owner; fix them with `podman unshare chown -R 0:0 "$(podman volume inspect --format '{{.Mountpoint}}' claude-xmpp_claude-home)"` (uid 0 in `podman unshare` is you).
 
 ### With compose
 

@@ -6,3 +6,4 @@ config.toml
 slixmpp/
 .env
 /workspace/
+/home/
